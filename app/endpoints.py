@@ -76,15 +76,21 @@ def _cota_publica(cfg):
     n = max(0, len(config_mod.chaves_ativas(cfg)))
     rpm = int(lim.get("rpm") or 0)
     tpm = int(lim.get("tpm") or 0)
+    compartilhada = bool(cfg.get("cota_compartilhada"))
     return {
         "janela_efetiva": "minuto",
+        "cota_compartilhada": compartilhada,
         "rpm_por_chave": rpm,
         "tpm_por_chave": tpm,
         "requisicoes_dia_por_chave": int(lim.get("requisicoes_dia") or 0),
         "tokens_mes_por_chave": int(lim.get("tokens_mes") or 0),
         "chaves_ativas": n,
-        "pool_rpm": rpm * n,
-        "pool_tpm": tpm * n,
+        # Com cota compartilhada, a capacidade REAL do pool e a de UM
+        # projeto: anunciar rpm*n para o cliente e a mentira de 36x do bug
+        # B1 (docs/DIAGNOSTICO_COTA.md secao 2) - o cliente refem do pool
+        # acha que ha folga que nao existe.
+        "pool_rpm": rpm if compartilhada else rpm * n,
+        "pool_tpm": tpm if compartilhada else tpm * n,
     }
 
 

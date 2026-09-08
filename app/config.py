@@ -51,6 +51,12 @@ PADRAO = {
     "onda_jitter_max_ms": 2000,
     "onda_adianto_ms": 250,
     "gateway_token": "",
+    # Cota compartilhada por PROJETO (true quando todas as keys pertencem ao
+    # mesmo projeto Google - caso do AI Studio, que cria um projeto unico).
+    # Limites oficiais sao por projeto, nao por chave (RELATORIO_GEMINI_API
+    # 8.1). Com true: UM balde de RPM/TPM para a frota, valvula global,
+    # admissao preditiva pelo grupo e cooldown de grupo no 429 de quota.
+    "cota_compartilhada": False,
     "chaves": [],
     "modelos_indisponiveis": [],
     "limites": {

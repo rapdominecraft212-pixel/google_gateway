@@ -43,6 +43,55 @@ class Valvula:
                     "quando": time.time(),
                 }
 
+    def configurar_grupo(self, nomes, rpm):
+        """Um UNICO balde compartilhado por todos os nomes (cota por projeto).
+
+        Cenario: chaves do mesmo projeto Google compartilham a cota real de
+        RPM - um balde por chave deixaria a frota disparar N*rpm/min contra
+        um teto real de rpm/min. Aqui todos os nomes apontam para o MESMO
+        dict (mutado sempre sob o mesmo lock), entao consumir() em qualquer
+        chave gasta do mesmo balde: lambda <= mu passa a valer para o POOL
+        inteiro, nao so para cada chave. Re-configurar preserva as fichas
+        atuais (mesma semantica do configurar por chave).
+        """
+        rpm = float(rpm or 0)
+        nomes = [n for n in (nomes or []) if n]
+        if not nomes:
+            return
+        with self._lock:
+            if rpm <= 0:
+                for nome in nomes:
+                    self._baldes[nome] = {"ilimitado": True}
+                return
+            cap = max(1.0, rpm)
+            # reuso: se os nomes ja apontam para um mesmo balde real,
+            # apenas ajusta o teto preservando as fichas restantes
+            atual = None
+            for nome in nomes:
+                cand = self._baldes.get(nome)
+                if cand is None or cand.get("ilimitado"):
+                    continue
+                if atual is None:
+                    atual = cand
+                elif cand is not atual:
+                    atual = None  # baldes divergentes: recomeca limpo
+                    break
+            if atual is not None:
+                atual["cap"] = cap
+                atual["taxa"] = cap / 60.0
+                atual["tokens"] = min(atual["tokens"], cap)
+                balde = atual
+            else:
+                balde = {
+                    "ilimitado": False,
+                    "tokens": cap,
+                    "cap": cap,
+                    "taxa": cap / 60.0,
+                    "quando": time.time(),
+                }
+            for nome in nomes:
+                self._baldes[nome] = balde
+
     def _repor(self, balde, agora):
         delta = max(0.0, agora - balde["quando"])
         balde["tokens"] = min(balde["cap"], balde["tokens"] + delta * balde["taxa"])

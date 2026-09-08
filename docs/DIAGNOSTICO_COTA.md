@@ -171,23 +171,35 @@ python teste/teste_cota_real.py --yes-real
 tomar 429, o balde é compartilhado — B1 vira fato, e a correção F1 abaixo é
 obrigatória. Se B continuar OK, o problema é outro (então B4/B2 levam a culpa).
 
-## 7. Plano de correção (ordem de prioridade)
+## 7. Plano de correção — STATUS
 
-1. **F1 — cota por grupo/projeto**: declarar no config quais keys compartilham
-   projeto (`"projeto": "..."` por chave, ou modo global
-   `"cota_compartilhada": true`). Janelas de RPM/TPM passam a ser somadas **por
-   grupo**; roteador escolhe grupo com folga; admissão preditiva de TPM
-   (que já existe por chave em `roteador.py`) passa a valer pelo grupo.
-2. **F2 — failover consciente de quota**: 429-quota em ≥N keys do mesmo grupo
-   em <X s ⇒ cooldown do **grupo inteiro** (com `retry_after` do Google quando
-   houver), em vez de queimar as 36. Corta a tempestade na raiz (B2).
-3. **F3 — racers só para capacidade**: falha tipo `quota` não alimenta
-   `registrar_sinal_racers` (só 503/rede alimentam) (B3).
-4. **F4 — conferir limites reais**: AI Studio → Rate limits; ajustar
-   `config.json` com o que o P1 medir (B4).
-5. **F5 — mitigação de contexto**: compactação/subagents no opencode para
-   conter 39k→96k (B5); no gateway, orçamento de TPM por grupo já ajuda.
-6. **F6 — db readonly**: reproduzir/caçar o lock no Windows (B6).
+1. **F1 — cota por grupo/projeto: ✅ IMPLEMENTADO** (`cota_compartilhada: true`
+   no config). Valvula global (um balde de fichas para a frota —
+   `Valvula.configurar_grupo`), janelas de TPM somadas por grupo na admissão
+   preditiva (`Estado.ativar_cota_grupo` + `tpm_disponivel`/`balde_pristino`/
+   `teto_de`/`reservar` conscientes do grupo), porta de RPM do grupo no
+   roteador (`roteador._elegiveis`) e números honestos na API
+   (`_cota_publica`: `pool_rpm=20, pool_tpm=250000` em vez de 720/9M).
+   Provas: `teste/teste_cota_compartilhada.py` (27 casos reais, zero mock) e
+   smoke ao vivo do servidor.
+2. **F2 — cooldown de grupo no 429 de quota: ✅ IMPLEMENTADO**
+   (`Estado.marcar_cooldown_grupo` + `proxy.py` no caminho do 429). Um 429 de
+   quota trava a frota pelo prazo que o Google pediu (retryDelay/Retry-After);
+   o pedido espera a vaga (park/espera) em vez de queimar 36 chaves. Racers
+   limitados a 2 sob cota compartilhada (paralelismo não multiplica RPM de um
+   balde morto). Com `espera_cooldown_max_seg: 30`, a espera de vaga vira
+   sucesso tardio em vez de erro.
+3. **F3 — racers sobre quota: ✅ já estava coberto** (correção de registro):
+   429 de quota NÃO incrementa o sinal dos racers (só 503/timeout/rede) — o
+   sobe-desce observado na produção vinha das tempestades reais de 503, onde
+   racers são por design. O teto 2 do modo compartilhado cobre o resto.
+4. **F4 — conferir limites reais do tier: ⏳ pendente** — roda
+   `teste_cota_real.py --yes-real` (ou o `.bat`) com keys novas; o P1 mede o
+   RPM real e o texto do 429 traz os limites exatos.
+5. **F5 — mitigação de contexto (39k→96k): ⏳ client-side** — opencode com
+   compactação/subagents; no gateway, a admissão preditiva por grupo já
+   segura o balde.
+6. **F6 — db readonly no Windows: ⏳ pendente** (B6; não causa o 429).
 
 ## 8. Perguntas em aberto
 

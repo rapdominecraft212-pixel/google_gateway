@@ -102,6 +102,12 @@ COMO USAR
    API keys) na lista "chaves" (campos nome/key). Chave vazia =
    ignorada. Ajuste "limites" para os seus rate limits (veja AI
    Studio > Rate limits; ex.: free tier do gemini-3.6-flash ~20 RPM).
+   IMPORTANTE - se todas as suas keys sao do MESMO projeto Google
+   (e o caso do AI Studio, que cria um projeto unico), deixe
+   "cota_compartilhada": true - o Google cobra cota por PROJETO,
+   nao por chave, e com o flag o gateway passa a respeitar isso
+   (um balde de RPM/TPM para a frota toda, cooldown de grupo no
+   429 em vez de queimar a pool; ver docs/DIAGNOSTICO_COTA.md).
 
 2. Suba o servidor (deixe rodando):
      python servidor.py

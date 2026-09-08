@@ -45,6 +45,11 @@ class Estado:
         self._racers_sinais = deque(maxlen=64)
         self.pedidos_em_voo = 0
         self.valvula = Valvula()
+        # --- Cota compartilhada por projeto (cfg cota_compartilhada) ---
+        # Quando ativo, TODAS as chaves do grupo compartilham UM balde de
+        # RPM/TPM: e a realidade do Google (limites por PROJETO, nao por
+        # chave - RELATORIO_GEMINI_API.md 8.1). Ver ativar_cota_grupo().
+        self._cota_grupo = None
         # Fila global de rotacao de chaves (modelo "caixa": pega da FRENTE,
         # usada vai para o FUNDO). Compartilhada por TODOS os agentes/pedidos
         # do processo — e isso que garante que agentes paralelos sempre
@@ -298,6 +303,141 @@ class Estado:
         with self._lock:
             self.teto_reserva = dict(tpm_por_chave or {})
 
+    # ------------------------------------------------------------------
+    # Cota compartilhada por projeto (cota_compartilhada: true no config)
+    # ------------------------------------------------------------------
+    def ativar_cota_grupo(self, nomes, teto_tpm=0):
+        """Liga o balde de cota unico para o grupo de chaves (idempotente).
+
+        Realidade do Google: as cotas sao por PROJETO, nao por chave. Quando
+        todas as keys do config pertencem ao mesmo projeto, a frota inteira
+        tem UM balde de RPM/TPM. Com o modo ativo:
+          - tpm_disponivel()/teto_de()/balde_pristino()/reservar() passam a
+            contar uso+reservas SOMADOS do grupo contra o teto de UM projeto
+            (a admissao preditiva do roteador funciona sem nenhuma mudanca);
+          - marcar_cooldown_grupo() trava a frota inteira num 429 de quota
+            (queimar a pool so gastaria mais RPM do mesmo projeto morto).
+        """
+        nomes = [str(n) for n in (nomes or []) if n]
+        with self._lock:
+            if not nomes:
+                self._cota_grupo = None
+                return
+            try:
+                teto = int(teto_tpm or 0)
+            except (TypeError, ValueError):
+                teto = 0
+            self._cota_grupo = {"nomes": set(nomes), "teto": teto}
+
+    def desativar_cota_grupo(self):
+        with self._lock:
+            self._cota_grupo = None
+
+    def cota_grupo_ativa(self):
+        with self._lock:
+            return self._cota_grupo is not None
+
+    def _uso_minuto_grupo_lockado(self, agora):
+        """Tokens usados pelo GRUPO no minuto-calendario corrente (soma)."""
+        grupo = self._cota_grupo
+        if not grupo:
+            return 0
+        balde = self._minuto_id(agora)
+        total = 0
+        for nome in grupo["nomes"]:
+            lista = self.uso_recente.get(nome)
+            if not lista:
+                continue
+            while lista and agora - lista[0][0] > 120:
+                lista.pop(0)
+            total += sum(par[1] for par in lista if self._minuto_id(par[0]) == balde)
+        return total
+
+    def _reserva_minuto_grupo_lockado(self, agora):
+        """Reservas em voo do GRUPO no minuto-calendario corrente (soma)."""
+        grupo = self._cota_grupo
+        if not grupo:
+            return 0
+        balde = self._minuto_id(agora)
+        total = 0
+        for nome in grupo["nomes"]:
+            lista = self.reservas.get(nome)
+            if not lista:
+                continue
+            total += sum(valor for ts, valor in lista
+                         if self._minuto_id(ts) == balde
+                         and agora - ts <= _RESERVA_TTL_SEG)
+        return total
+
+    def uso_60s_grupo(self):
+        """(reqs, tokens) somados de TODAS as chaves do grupo na janela 60s."""
+        agora = time.time()
+        with self._lock:
+            grupo = self._cota_grupo
+            if not grupo:
+                return 0, 0
+            reqs = 0
+            tokens = 0
+            for nome in grupo["nomes"]:
+                lista = self.uso_recente.get(nome)
+                if not lista:
+                    continue
+                while lista and agora - lista[0][0] > 60:
+                    lista.pop(0)
+                reqs += len(lista)
+                tokens += sum(par[1] for par in lista)
+            return reqs, tokens
+
+    def tpm_disponivel_grupo(self):
+        """Tokens livres do balde DO GRUPO (None = sem teto configurado)."""
+        with self._lock:
+            grupo = self._cota_grupo
+            if not grupo:
+                return None
+            teto = grupo["teto"]
+            if teto <= 0:
+                return None
+            agora = time.time()
+            for nome in grupo["nomes"]:
+                self._podar_reservas(nome, agora)
+            return (teto
+                    - self._uso_minuto_grupo_lockado(agora)
+                    - self._reserva_minuto_grupo_lockado(agora))
+
+    def balde_pristino_grupo(self):
+        with self._lock:
+            grupo = self._cota_grupo
+            if not grupo:
+                return True
+            agora = time.time()
+            for nome in grupo["nomes"]:
+                self._podar_reservas(nome, agora)
+            return (self._uso_minuto_grupo_lockado(agora) <= 0
+                    and self._reserva_minuto_grupo_lockado(agora) <= 0)
+
+    def marcar_cooldown_grupo(self, mensagem, ate_ts, tipo="retry"):
+        """Bloqueia TODAS as chaves do grupo ate ate_ts (nunca encurta).
+
+        Um 429 de quota sob cota compartilhada significa PROJETO esgotado:
+        tentar outra chave so gasta mais RPM do mesmo balde morto. Marca a
+        frota inteira de uma vez; o pedido espera a vaga (park/espera) ou
+        falha rapido com Retry-After honesto, em vez de queimar 36 chaves.
+        O bloqueio mais longo ja existente (ex.: quota do dia) e preservado.
+        """
+        agora = time.time()
+        with self._lock:
+            grupo = self._cota_grupo
+            if not grupo:
+                return
+            for nome in grupo["nomes"]:
+                self.erros[nome] = mensagem
+                self.ultimo_erro_em[nome] = agora
+                self.erros_recentes.setdefault(nome, []).append(agora)
+                atual = self.cooldown_ate.get(nome, 0)
+                if ate_ts >= atual:
+                    self.cooldown_ate[nome] = max(atual, ate_ts, agora + 0.5)
+                    self.bloqueio_tipo[nome] = tipo
+
     def reservar(self, chave, tokens):
         """Aparta tokens de um pedido ANTES de dispara-lo (admissao preditiva).
 
@@ -313,6 +453,28 @@ class Estado:
             return True
         agora = time.time()
         with self._lock:
+            # --- modo cota compartilhada: balde do GRUPO (soma de todas) ---
+            grupo = self._cota_grupo
+            if grupo is not None:
+                teto = grupo["teto"]
+                if teto <= 0:
+                    # sem teto configurado: comportamento ilimitado (igual ao
+                    # caminho por chave sem teto)
+                    self.reservas.setdefault(chave, []).append((agora, tokens))
+                    return True
+                for nome in grupo["nomes"]:
+                    self._podar_reservas(nome, agora)
+                atual = self._reserva_minuto_grupo_lockado(agora)
+                uso = self._uso_minuto_grupo_lockado(agora)
+                nova = atual + tokens
+                if nova > teto:
+                    # excecao do balde pristino do GRUPO: 1 oversized por
+                    # balde vazio (mesma regra que o Google aplica ao projeto)
+                    if not (atual <= 0 and uso <= 0):
+                        return False
+                self.reservas.setdefault(chave, []).append((agora, tokens))
+                return True
+            # --- caminho classico: balde por chave ---
             teto = self.teto_reserva.get(chave, 0)
             self._podar_reservas(chave, agora)
             # soma SOMENTE o minuto corrente: reserva do minuto anterior
@@ -412,7 +574,12 @@ class Estado:
         Modelo de baldes de minuto-calendario (igual ao Google): apos :00 o
         minuto anterior zera e a folga volta ao teto. None = chave sem teto
         de TPM configurado (tratada como ilimitada).
+
+        Com cota_compartilhada ativa, responde pelo GRUPO inteiro (o balde
+        real e o do projeto, compartilhado por todas as chaves).
         """
+        if self._cota_grupo is not None:
+            return self.tpm_disponivel_grupo()
         with self._lock:
             teto = self.teto_reserva.get(chave, 0)
             if teto <= 0:
@@ -422,8 +589,16 @@ class Estado:
             return teto - self._uso_minuto_atual(chave, agora) - self._reserva_minuto_atual(chave, agora)
 
     def teto_de(self, chave):
-        """Teto TPM configurado da chave (0 = sem teto)."""
+        """Teto TPM configurado da chave (0 = sem teto).
+
+        Com cota_compartilhada ativa, responde o teto do GRUPO (projeto).
+        """
         with self._lock:
+            if self._cota_grupo is not None:
+                try:
+                    return int(self._cota_grupo["teto"] or 0)
+                except (TypeError, ValueError):
+                    return 0
             try:
                 return int(self.teto_reserva.get(chave, 0) or 0)
             except (TypeError, ValueError):
@@ -434,7 +609,12 @@ class Estado:
         reservado). O Google aceita UM pedido oversized (>teto) por balde
         pristino (prova: tin=326k com 200 no historico); o 2o no mesmo
         minuto leva 429. Sem isso, pedido maior que o teto seria recusado
-        por TODAS as chaves — deadlock de admissao."""
+        por TODAS as chaves — deadlock de admissao.
+
+        Com cota_compartilhada ativa, responde pelo GRUPO inteiro.
+        """
+        if self._cota_grupo is not None:
+            return self.balde_pristino_grupo()
         with self._lock:
             agora = time.time()
             self._podar_reservas(chave, agora)

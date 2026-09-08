@@ -4,6 +4,17 @@ LIMITE_ESGOTADA = 99.5
 
 
 def _elegiveis(estado, cfg, chaves, max_conc, agora, extra_cheia=None, tokens_necessarios=0):
+    # modo cota compartilhada: o balde de RPM/TPM e do PROJETO (soma de todas
+    # as chaves). Sem isso, chave "fria" e vista com folga que nao existe - a
+    # causa-raiz do bug B1 (96% dos 429 de producao chegaram com janela local
+    # da chave zerada; ver docs/DIAGNOSTICO_COTA.md secao 2).
+    compartilhada = bool(cfg.get("cota_compartilhada"))
+    reqs_grupo = None
+    if compartilhada:
+        try:
+            reqs_grupo, _tokens_grupo = estado.uso_60s_grupo()
+        except Exception:
+            reqs_grupo = None
     out = []
     for chave in chaves:
         nome = chave["nome"]
@@ -15,6 +26,14 @@ def _elegiveis(estado, cfg, chaves, max_conc, agora, extra_cheia=None, tokens_ne
             continue
         if extra_cheia is not None and extra_cheia(nome):
             continue
+        if compartilhada and reqs_grupo is not None:
+            limite_rpm = int(chave.get("limite_rpm")
+                             or (cfg.get("limites") or {}).get("rpm")
+                             or 0)
+            if limite_rpm > 0 and reqs_grupo >= limite_rpm:
+                # o PROJETO ja gastou o RPM do minuto: nenhuma chave do grupo
+                # tem folga, mesmo as que nao fizeram nada (balde comum)
+                continue
         if tokens_necessarios > 0:
             # Admissao preditiva de TPM: a folga tem que caber o pedido INTEIRO,
             # contando o que ja esta em voo na chave (reservado). Sem isso, dois
@@ -22,6 +41,9 @@ def _elegiveis(estado, cfg, chaves, max_conc, agora, extra_cheia=None, tokens_ne
             # Excecao: pedido MAIOR que o teto cabe UMA vez em balde pristino
             # (Google aprova 1 oversized por balde vazio); sem isso, oversized
             # seria recusado por todas as chaves = deadlock de admissao.
+            # Com cota_compartilhada, tpm_disponivel()/balde_pristino()/
+            # teto_de() ja respondem pelo GRUPO (estado.py): a admissao
+            # preditiva passa a valer para o balde do projeto sem mudanca aqui.
             livres = estado.tpm_disponivel(nome)
             if livres is not None and livres < tokens_necessarios:
                 try:
@@ -31,7 +53,12 @@ def _elegiveis(estado, cfg, chaves, max_conc, agora, extra_cheia=None, tokens_ne
                 if not (teto > 0 and tokens_necessarios > teto
                         and estado.balde_pristino(nome)):
                     continue
-        percent = estado.percent_ativo(nome)
+        if compartilhada:
+            # percent por chave (janela do banco) nao representa o balde do
+            # projeto; as portas de admissao sao o RPM/TPM do grupo acima
+            percent = None
+        else:
+            percent = estado.percent_ativo(nome)
         if percent is not None and percent >= LIMITE_ESGOTADA:
             continue
         if estado.em_voo.get(nome, 0) >= max_conc:

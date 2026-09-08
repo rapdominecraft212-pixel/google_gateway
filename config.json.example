@@ -8,7 +8,7 @@
   "cooldown_net_seg": 30,
   "cooldown_5xx_seg": 10,
   "max_ciclos_espera": 2,
-  "espera_cooldown_max_seg": 5,
+  "espera_cooldown_max_seg": 30,
   "timeout_http_seg": 120,
   "chaves_por_tentativa": 1,
   "racers_cap_total": 6,
@@ -60,5 +60,6 @@
     "gemini-2.5-flash-preview-tts",
     "gemini-2.5-pro-preview-tts"
   ],
-  "host": "0.0.0.0"
+  "host": "0.0.0.0",
+  "cota_compartilhada": true
 }

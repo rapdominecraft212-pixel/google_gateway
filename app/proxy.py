@@ -430,8 +430,22 @@ def _abrir_interno(estado, cfg, corpo_bytes, medidor):
     motivos = []
     limites_rpm = {c["nome"]: int(limites_por_chave(cfg, c).get("rpm") or 0) for c in cfg.get("chaves") or []}
     limites_tpm = {c["nome"]: int(limites_por_chave(cfg, c).get("tpm") or 0) for c in cfg.get("chaves") or []}
-    for nome_k, rpm_k in limites_rpm.items():
-        estado.valvula.configurar(nome_k, rpm_k)
+    # Cota compartilhada por projeto (docs/DIAGNOSTICO_COTA.md, secao 7-F1):
+    # todas as keys do mesmo projeto Google compartilham UM balde de RPM/TPM.
+    # A valvula passa a ser UM balde de fichas da frota inteira (lambda <= mu
+    # no POOL, nao por chave) e o estado passa a somar uso/reservas do grupo
+    # na admissao preditiva. Um 429 de quota trava o grupo (F2), nao queima
+    # a pool: queimar 36 chaves num balde morto so gasta mais RPM do projeto.
+    _cota_compartilhada = bool(cfg.get("cota_compartilhada"))
+    _nomes_frota = [nome_k for nome_k in limites_rpm]
+    if _cota_compartilhada and _nomes_frota:
+        _rpm_grupo = max([v for v in limites_rpm.values()] or [0])
+        _teto_grupo = max([v for v in limites_tpm.values()] or [0])
+        estado.valvula.configurar_grupo(_nomes_frota, _rpm_grupo)
+        estado.ativar_cota_grupo(_nomes_frota, _teto_grupo)
+    else:
+        for nome_k, rpm_k in limites_rpm.items():
+            estado.valvula.configurar(nome_k, rpm_k)
     estado.configurar_teto_reserva(limites_tpm)
     estimativa = estimar_tokens(corpo_bytes)
 
@@ -493,14 +507,22 @@ def _abrir_interno(estado, cfg, corpo_bytes, medidor):
         limite = limites_rpm.get(nome, 0)
         if limite <= 0:
             return False
-        reqs, _ = estado.uso_60s(nome)
+        if _cota_compartilhada:
+            # balde do projeto: soma a frota inteira, nao so esta chave
+            reqs, _ = estado.uso_60s_grupo()
+        else:
+            reqs, _ = estado.uso_60s(nome)
         return reqs >= limite
 
     def tpm_cheia(nome):
         limite = limites_tpm.get(nome, 0)
         if limite <= 0:
             return False
-        _, tokens = estado.uso_60s(nome)
+        if _cota_compartilhada:
+            # balde do projeto: soma a frota inteira, nao so esta chave
+            _, tokens = estado.uso_60s_grupo()
+        else:
+            _, tokens = estado.uso_60s(nome)
         return tokens >= limite
 
     def _onda_ocupada(nome):
@@ -527,7 +549,6 @@ def _abrir_interno(estado, cfg, corpo_bytes, medidor):
     # nao virar "thinking forever"; o deadline continua sendo o limite duro.
     _park_ciclos = 0
     _park_max = max(1, int(cfg.get("park_ciclos_max", 6)))
-    _nomes_frota = [c.get("nome") for c in (cfg.get("chaves") or []) if c.get("nome")]
 
     while True:
         if time.time() > deadline:
@@ -581,6 +602,11 @@ def _abrir_interno(estado, cfg, corpo_bytes, medidor):
         # reflexo intra-pedido (cada rodada que falhou por capacidade soma +1),
         # sempre respeitando o cap da frota.
         _n = min(_racers_cap, max(n_racers, _racers_base + medidor["rodadas"]))
+        if _cota_compartilhada and _n > 2:
+            # balde unico do projeto: racers fazem sentido entre baldes
+            # INDEPENDENTES; com cota compartilhada, paralelismo so multiplica
+            # o RPM do mesmo projeto morto. Teto 2: hedge de capacidade leve.
+            _n = 2
         # Guarda da frota: quando a MAIORIA das chaves esta doente (tempestade
         # generalizada), abrir leque de 6 so multiplica o volume que o Google ja
         # esta recusando (auto-RPM) e queima cota. Ai o leque encolhe para 2:
@@ -907,11 +933,17 @@ def _abrir_interno(estado, cfg, corpo_bytes, medidor):
                             _ev_retry = None
                         alvo = gemini_api.quota_reset_alvo(corpo_erro)
                         if alvo == "mes":
-                            estado.marcar_quota(nome, "cota mensal esgotada: " + desc, reset_mes_ts())
-                            _cd_s = max(0.0, reset_mes_ts() - time.time())
+                            _quota_ate = reset_mes_ts()
+                            _quota_tipo = "quota"
+                            _quota_msg = "cota mensal esgotada: " + desc
+                            estado.marcar_quota(nome, _quota_msg, _quota_ate)
+                            _cd_s = max(0.0, _quota_ate - time.time())
                         elif alvo == "dia":
-                            estado.marcar_quota(nome, "cota diaria esgotada: " + desc, reset_dia_ts())
-                            _cd_s = max(0.0, reset_dia_ts() - time.time())
+                            _quota_ate = reset_dia_ts()
+                            _quota_tipo = "quota"
+                            _quota_msg = "cota diaria esgotada: " + desc
+                            estado.marcar_quota(nome, _quota_msg, _quota_ate)
+                            _cd_s = max(0.0, _quota_ate - time.time())
                         else:
                             # Espelho do Google: esperar EXATAMENTE o que ele pediu
                             # (retryDelay/Retry-After), sem multiplicador inventado.
@@ -921,8 +953,27 @@ def _abrir_interno(estado, cfg, corpo_bytes, medidor):
                                 or cooldown_base
                             )
                             retry = min(retry, teto_429)
-                            estado.marcar_retry(nome, "rate limit (RPM/TPM): " + desc, time.time() + retry)
+                            _quota_ate = time.time() + retry
+                            _quota_tipo = "retry"
+                            _quota_msg = "rate limit (RPM/TPM): " + desc
+                            estado.marcar_retry(nome, _quota_msg, _quota_ate)
                             _cd_s = float(retry)
+                        if _cota_compartilhada:
+                            # F2 - cooldown de GRUPO: sob cota por projeto, um
+                            # 429 de quota significa que o balde COMUM estourou.
+                            # Trocar de chave e inutil (mesmo balde) e so queima
+                            # mais RPM do projeto: trava a frota inteira pelo
+                            # mesmo prazo que o Google pediu, e o pedido espera
+                            # a vaga (park) ou falha rapido com Retry-After
+                            # honesto - em vez de queimar 36 chaves em rodadas.
+                            try:
+                                estado.marcar_cooldown_grupo(
+                                    _quota_msg + f" [via {nome}; cota do projeto e compartilhada]",
+                                    _quota_ate,
+                                    _quota_tipo,
+                                )
+                            except Exception:
+                                pass
                 elif erro.code in CODES_COOLDOWN or erro.code >= 500:
                     # 5xx/408 ("high demand" etc.): descanso curto e fixo em vez
                     # de re-martelar a chave no mesmo segundo. O 503 alimenta
