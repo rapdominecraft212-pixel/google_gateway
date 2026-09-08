@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="pt-BR" data-page="opencode">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Monitor Gemini</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23f3f37f'/%3E%3Crect x='4' y='4' width='8' height='8' fill='%231c1c1c'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="shell">
+    <header data-component="top">
+      <a class="logo" href="#">monitor<em>gemini</em></a>
+      <nav class="nav-desktop">
+        <a href="#chaves">Chaves</a>
+        <a href="#uso">Uso</a>
+        <a href="#requisicoes">Requisições</a>
+        <button class="btn btn-primary" id="btn-atualizar-topo">Atualizar agora</button>
+      </nav>
+      <button class="hamburger" id="btn-menu" aria-label="Abrir menu">≡</button>
+    </header>
+
+    <div class="mobile-nav" id="menu-mobile" hidden>
+      <a href="#chaves">Chaves</a>
+      <a href="#uso">Uso</a>
+      <a href="#requisicoes">Requisições</a>
+      <button id="btn-atualizar-mobile">Atualizar agora</button>
+    </div>
+
+    <main class="page">
+      <section data-component="hero">
+        <h1>Monitor Gemini</h1>
+        <p>Uso local das chaves da Gemini API por dia (RPD) — com gateway multi-key que troca de chave na hora quando uma estoura limite ou rate limit.</p>
+        <div class="hero-stats" id="hero-stats"></div>
+        <p class="atualizado-em" id="atualizado-em">carregando...</p>
+      </section>
+
+      <section class="section" id="chaves">
+        <div class="section-title">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="5.5" cy="5.5" r="3.5"></circle>
+            <path d="M8.5 8.5 13 13"></path>
+          </svg>
+          <div>
+            <h3>Chaves</h3>
+            <p>Percentual usado em cada janela, tempo até o reset e a chave que o gateway vai preferir agora. Adicione, desative ou exclua chaves sem editar o config.json.</p>
+          </div>
+        </div>
+        <div class="lista-chaves" id="lista-chaves"></div>
+        <div class="form-chave">
+          <div class="form-titulo">Adicionar chave</div>
+          <div class="form-linha">
+            <input id="nova-nome" type="text" placeholder="nome (ex: Google-4)" autocomplete="off">
+            <input id="nova-key" type="text" placeholder="cole a key aqui" autocomplete="off">
+            <select id="nova-tipo">
+              <option value="gemini">tipo gemini (com coleta de uso)</option>
+              <option value="generico">tipo generico (sem coleta de uso)</option>
+            </select>
+            <button class="btn btn-primary" id="btn-adicionar">Adicionar</button>
+          </div>
+          <p class="form-erro" id="form-erro"></p>
+        </div>
+      </section>
+
+      <section class="section" id="uso">
+        <div class="section-title">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M2 13 L5 9 L8 11 L13 4"></path>
+            <path d="M10 4 H13 V7"></path>
+          </svg>
+          <div>
+            <h3>Uso nas últimas coletas</h3>
+            <p>RPD (requisições por dia) de cada chave ao longo do tempo, do histórico em SQLite.</p>
+          </div>
+        </div>
+        <div class="grafico-box" id="grafico"></div>
+        <div class="grafico-legenda" id="grafico-legenda"></div>
+      </section>
+
+      <section class="section" id="requisicoes">
+        <div class="section-title">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M2 3 H14"></path>
+            <path d="M2 8 H14"></path>
+            <path d="M2 13 H14"></path>
+          </svg>
+          <div>
+            <h3>Requisições</h3>
+            <p>O que o gateway roteou: qual chave atendeu, modelo, tempo, tokens e erros.</p>
+          </div>
+        </div>
+        <div class="tabs" role="tablist">
+          <button class="tab ativa" data-filtro="todas">Todas</button>
+          <button class="tab" data-filtro="falhas">Só falhas</button>
+        </div>
+        <div class="tabela-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>hora</th>
+                <th>chave</th>
+                <th>modelo</th>
+                <th>status</th>
+                <th>tempo</th>
+                <th>tokens in/out</th>
+                <th>erro</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-req"></tbody>
+          </table>
+        </div>
+        <p class="req-contagem" id="req-contagem"></p>
+      </section>
+
+      <section class="section" id="configuracao">
+        <div class="section-title">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="8" cy="8" r="2.5"></circle>
+            <path d="M8 1.5 V4 M8 12 V14.5 M1.5 8 H4 M12 8 H14.5"></path>
+          </svg>
+          <div>
+            <h3>Configuração</h3>
+            <p>Valores lidos do config.json do servidor. Chaves são adicionadas, desativadas ou excluídas na seção Chaves acima.</p>
+          </div>
+          <button class="btn" id="btn-sync-modelos">Sincronizar modelos do Google</button>
+        </div>
+        <dl class="config-lista" id="config-info"></dl>
+      </section>
+
+      <section class="section aviso" id="estado-conexao" hidden>
+        <p id="erro-conexao"></p>
+      </section>
+    </main>
+
+    <footer data-component="footer">
+      <div class="cell">
+        <button id="btn-atualizar">Atualizar agora</button>
+        <span class="rotulo">força a coleta de uso</span>
+      </div>
+      <div class="cell">
+        <a href="/api/resumo" target="_blank" rel="noopener">API JSON</a>
+        <span class="rotulo">resumo das chaves</span>
+      </div>
+      <div class="cell">
+        <span id="hora-servidor">--:--:--</span>
+        <span class="rotulo">hora do servidor</span>
+      </div>
+    </footer>
+
+    <div class="legal">
+      <span id="legal-porta">porta --</span>
+      <span id="legal-versao">monitor gemini 2.0</span>
+      <a href="/docs" target="_blank" rel="noopener">docs da api</a>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

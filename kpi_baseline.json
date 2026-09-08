@@ -1,0 +1,44 @@
+{
+  "janela": {
+    "primeira": "2026-08-16T04:11:23",
+    "ultima": "2026-08-23T13:50:26",
+    "linhas": 6751
+  },
+  "cadeias": {
+    "cadeias_total": 1845,
+    "cadeias_ok_pct": 54.5,
+    "duracao_s": {
+      "media": 92.6,
+      "mediana": 21.8,
+      "p90": 359.1,
+      "max": 1036.4
+    },
+    "tentativas_max": 517,
+    "tentativas_gt10_pct": 4.55,
+    "tempo_inutil_pct": 88.6,
+    "desperdicio_por_causa_h": {
+      "429 429 (HTTP 429)": 23.43,
+      "503 HTTP 503": 6.31,
+      "None The read operation timed out": 3.28,
+      "429 HTTP 429": 1.92,
+      "429 429 (HTTP 429) | You exceeded your curre": 1.74,
+      "429 429 (HTTP 429) | Resource has been exhau": 1.38
+    },
+    "peso_morto_medio_em_ok_s": 9.8,
+    "latencia_ok_s": {
+      "mediana": 8.9,
+      "p90": 58.6
+    }
+  },
+  "over_cooldown": {
+    "amostras": 489,
+    "excesso_mediano_s": 43.9,
+    "razao_mediana_imposto_vs_pedido": 2.9,
+    "p90_excesso_s": 310.5
+  },
+  "503_repetido": {
+    "total_503": 558,
+    "repetida_mesma_chave_10s": 6,
+    "pct": 1.1
+  }
+}
