@@ -18,6 +18,11 @@ chaves começam a dar 429 ao mesmo tempo, inclusive as "frias". O failover entã
 **queima mais cota do projeto em vez de ajudar**, o pedido pendura ~35–120s
 esperando e morre com 429 `sem_chave`. É exatamente o sintoma relatado.
 
+> ⚠️ **Ver seção 9 — INCIDENTE**: em 07/09 às 23:12 as 36 keys passaram a dar
+> **401** (desativadas) cerca de 1h após o zip com elas em texto plano subir
+> para um repositório **público** no GitHub. O gateway não está "instável"
+> agora: está **sem nenhuma key viva**.
+
 ---
 
 ## 1. O sintoma (relato)
