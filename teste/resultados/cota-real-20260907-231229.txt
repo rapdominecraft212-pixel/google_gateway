@@ -1,0 +1,83 @@
+==============================================================================
+PACOTE DE DADOS - TESTE DE COTA REAL
+Monitor-Google / google_gateway (ver docs/DIAGNOSTICO_COTA.md)
+==============================================================================
+Gerado em        : 2026-09-07T23:12:29-03:00
+Maquina          : COMPUTADOR / User | Windows-10-10.0.19045-SP0
+Python           : 3.13.3 (C:\Users\User\AppData\Local\Programs\Python\Python313\python.exe)
+Pasta do repo    : C:\Users\User\Documents\GitHub\google_gateway
+Branch           : (git indisponivel)
+Commit           : (git indisponivel)
+GEMINI_API_BASE  : (nao definido - vai para o Google real)
+Proxies de rede  : (nenhum)
+Config sanitizado: 36 chaves (36 ativas) | porta 8011 | 20 modelos | limites: {"rpm": 20, "tpm": 250000, "requisicoes_dia": 1500, "tokens_dia": 0, "tokens_mes": 20000000}
+                   (keys OCULTAS de proposito - elas nao vao para o git)
+Gateway local    : ESTA NO AR (porta 8011) << AVISO: trafego paralelo do gateway/opencode pode contaminar a medicao;
+                   o ideal e parar o launcher e fechar o opencode antes do teste.
+Modo             : REAL (--yes-real)
+==============================================================================
+>>> SAIDA COMPLETA DE teste/teste_cota_real.py --yes-real
+==============================================================================
+36 chaves ativas. Modelo: gemini-3.8-flash. Hora: 23:12:29
+
+========================================================================
+P0 — radiografia das 36 chaves AGORA (1 pedido cada, 3.8-flash)
+  Google-1    401 1954ms
+  Google-2    401 1749ms
+  Google-3    401 1575ms
+  Google-4    401 1983ms
+  Google-5    401 1983ms
+  Google-6    401 1633ms
+  Google-7    401 1171ms
+  Google-8    401 1350ms
+  Google-9    401 1155ms
+  Google-10   401 1124ms
+  Google-11   401 1004ms
+  Google-12   401 1892ms
+  Google-13   401 2245ms
+  Google-14   401 2471ms
+  Google-15   401 2499ms
+  Google-16   401 2472ms
+  Google-17   401 2895ms
+  Google-18   401 1415ms
+  Google-19   401 1013ms
+  Google-20   401 1548ms
+  Google-21   401 1753ms
+  Google-22   401 1785ms
+  Google-23   401 1427ms
+  Google-24   401 1157ms
+  Google-25   401 1053ms
+  Google-26   401 1428ms
+  Google-27   401 1809ms
+  Google-28   401 1419ms
+  Google-29   401 1726ms
+  Google-30   401 1361ms
+  Google-31   401 1477ms
+  Google-32   401 1713ms
+  Google-33   401 1507ms
+  Google-34   401 1562ms
+  Google-35   401 1735ms
+  Google-36   401 1308ms
+
+  P0: 0 ok | 0 x429 | 0 x503 | outros: 36
+
+NENHUMA chave passou no P0 — tempestade em curso; P1+ mediria a tempestade, nao a cota.
+Mesmo assim rodando P3 com a primeira chave para ver o texto do erro...
+========================================================================
+P3 — a chave saturada do 3.8-flash ainda serve outro modelo?
+  Google-1 em gemini-3.5-flash-lite: 401 214ms
+
+Custo: 37 pedidos, ~0 tokens, 11s
+==============================================================================
+<<< FIM DA SAIDA (codigo 0, 12s)
+==============================================================================
+CUSTO APROXIMADO : ver linha CUSTO TOTAL acima (o proprio teste reporta)
+ARQUIVO          : teste\resultados\cota-real-20260907-231229.txt
+==============================================================================
+PROXIMO PASSO (GitHub Desktop):
+  1. Abra o GitHub Desktop - vai aparecer arquivo novo em teste\resultados\
+  2. Escreva o commit (ex.: "resultado do teste de cota") e clique em "Commit to ..."
+  3. Clique em "Push origin" para subir.
+Depois do push, o agente remoto le este arquivo e segue o plano F1-F6
+(docs/DIAGNOSTICO_COTA.md, secao 7).
+==============================================================================

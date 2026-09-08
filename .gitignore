@@ -1,0 +1,26 @@
+# --- Segredos e dados locais (NUNCA commitar) ---
+config.json
+backups/
+historico.db
+*.db
+*.db-shm
+*.db-wal
+
+# --- Runtime / logs ---
+logs/*
+!logs/.gitkeep
+*.log
+*.pid
+.gateway_lock_*
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# --- Editor / SO ---
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,80 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "gemini-gateway": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Gemini Gateway (multi-key)",
+      "options": {
+        "baseURL": "http://127.0.0.1:8011/v1",
+        "apiKey": "gateway-local"
+      },
+      "models": {
+        "gemini-3.8-flash": {
+          "name": "Gemini 3.8 Flash",
+          "description": "Mais recente: raciocínio dinâmico ativo por padrão (verificado via API)",
+          "reasoning": true
+        },
+        "gemini-3.7-flash": {
+          "name": "Gemini 3.7 Flash",
+          "description": "Raciocínio dinâmico ativo por padrão (verificado via API)",
+          "reasoning": true
+        },
+        "gemini-3.6-flash": {
+          "name": "Gemini 3.6 Flash",
+          "description": "Flash 3.6 com raciocínio nativo — recomendado pelo Google",
+          "reasoning": true
+        },
+        "gemini-3.5-flash": {
+          "name": "Gemini 3.5 Flash",
+          "description": "Flash 3.5 com raciocínio nativo",
+          "reasoning": true
+        },
+        "gemini-3.5-flash-lite": {
+          "name": "Gemini 3.5 Flash Lite",
+          "description": "Lite 3.5 econômica, sem raciocínio"
+        },
+        "gemini-flash-lite-latest": {
+          "name": "Gemini Flash Lite (última)",
+          "description": "Mais barata e rápida, sem raciocínio — ideal para tarefas simples"
+        },
+        "gemini-3.1-flash-lite": {
+          "name": "Gemini 3.1 Flash Lite",
+          "description": "Lite 3.1 estável, sem raciocínio"
+        },
+        "gemini-3-flash-preview": {
+          "name": "Gemini 3 Flash Preview",
+          "description": "Flash 3 em prévia, com raciocínio",
+          "reasoning": true
+        },
+        "gemini-flash-latest": {
+          "name": "Gemini Flash (última versão)",
+          "description": "Alias da flash mais recente, com raciocínio",
+          "reasoning": true
+        },
+        "gemini-pro-latest": {
+          "name": "Gemini Pro (última versão)",
+          "description": "Alias da pro mais recente, com raciocínio",
+          "reasoning": true
+        },
+        "gemini-omni-flash-preview": {
+          "name": "Gemini Omni Flash Preview",
+          "description": "Omni (texto/imagem/áudio) em prévia, com raciocínio",
+          "reasoning": true
+        },
+        "gemini-3.1-pro-preview": {
+          "name": "Gemini 3.1 Pro Preview",
+          "description": "Pro 3.1 em prévia: raciocínio de alto nível",
+          "reasoning": true
+        },
+        "gemma-4-31b-it": {
+          "name": "Gemma 4 31B (instruct)",
+          "description": "Modelo aberto maior: mais capaz que o 26B, sem raciocínio"
+        },
+        "gemma-4-26b-a4b-it": {
+          "name": "Gemma 4 26B (instruct)",
+          "description": "Modelo aberto compacto: leve e rápido, sem raciocínio"
+        }
+      }
+    }
+  }
+}
