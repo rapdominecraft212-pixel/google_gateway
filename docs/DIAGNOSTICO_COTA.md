@@ -192,3 +192,63 @@ obrigatória. Se B continuar OK, o problema é outro (então B4/B2 levam a culpa
   (AI Studio → Rate limits; o 429 do P1 traz o corpo completo do Google.)
 - O `sem_chave` instantâneo (2ms) às 18:48 logo após restart merece inspeção
   (estado de cooldown sobrevive ao restart?).
+
+---
+
+## 9. INCIDENTE 2026-09-07 23:12 — as 36 keys morreram juntas (401)
+
+Resultado real do `RODAR-TESTE-COTA.bat` (`teste/resultados/cota-real-20260907-231229.txt`):
+
+```
+P0: 36/36 chaves → HTTP 401 (resposta em 1–2,5s; zero 200, zero 429)
+```
+
+O caminho testado é o de produção (`gemini_api.abrir_chat`: POST no endpoint
+OpenAI-compat com `Authorization: Bearer` + `x-goog-api-key`) — o mesmo que
+funcionava horas antes.
+
+### Timeline (horário local de Brasília, UTC-3)
+
+| Hora | Evento |
+|---|---|
+| 22:08–22:13 | últimos pedidos 200 OK nos logs de produção |
+| **22:19** | repositório `google_gateway` criado no GitHub como **PÚBLICO**, commit inicial com o `Monitor-Google.zip` (**36 keys em texto plano**) |
+| ~22:45 | validação remota: keys reais já davam 401 (na época lido como artefato de canal) |
+| **23:12** | teste real: **TODAS as 36 keys → 401** |
+
+### Leitura
+
+Correlação de ~1h entre a exposição das keys em repo público e a morte de
+**todas** as keys juntas. A explicação mais provável: **detecção automática de
+vazamento pelo Google** (o GitHub varre repos públicos em busca de credenciais
+e notifica o provedor; keys expostas são desativadas).
+
+Hipótese alternativa (o corpo do 401 agora é capturado pelo teste atualizado —
+rodem de novo com keys novas se persistir): **ação em nível de conta** — usar
+36 keys para multiplicar a cota do free tier contraria os ToS do Google, e a
+conta/AI Studio pode ter sido limitada. O texto integral do erro distingue as
+duais causas ("API key not valid" = key desativada; texto de suspensão =
+conta).
+
+**Correção de registro:** a nota "suas keys provavelmente seguem vivas" da
+seção 5.3 estava errada — a validação remota de 22:45 já via o 401; naquele
+canal GET sem header o 401 era indistinguível de artefato de formato. O teste
+real na máquina do usuário resolveu a ambiguidade.
+
+### Lições e ações
+
+1. **ROTACIONAR AGORA**: descartar as 36 keys expostas no AI Studio e criar
+   keys novas. Keys expostas em repo público consideram-se comprometidas
+   para sempre — mesmo que o repo vire privado depois.
+2. As keys novas **nunca** vão para o git: `config.json` fica fora
+   (`.gitignore`), o zip com as antigas permanece no histórico (commit
+   `bcd8f34`) enquanto o histórico não for purgado / repo não for privado.
+3. Com keys novas, rodar o `.bat` de novo: o **P2** responde a pergunta da
+   cota compartilhada (seção 2) e o plano F1–F3 sai do papel. Se o 401
+   persistir com keys novas, o corpo do erro (agora capturado) dirá por quê.
+4. **Reduzir a frota**: se todas as keys compartilham o mesmo projeto, 36
+   keys não multiplicam cota nenhuma — só multiplicam a superfície de
+   vazamento (36 segredos para vigiar em vez de 4) e o custo do failover
+   (teto de 36–144 tentativas por pedido, bug B2). Menos keys, com o
+   roteador contando cota do jeito certo (F1), dá o mesmo resultado com
+   menos risco.

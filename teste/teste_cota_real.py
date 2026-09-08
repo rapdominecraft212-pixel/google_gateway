@@ -90,6 +90,13 @@ def p0(chaves):
     print(f"\n  P0: {len(ok)} ok | {len(e429)} x429 | {len(e503)} x503 | outros: {len(resultado)-len(ok)-len(e429)-len(e503)}")
     for n in e429[:3]:
         print(f"    texto 429 ({n}): {resultado[n][1][:200]}")
+    outros = [n for n, (st, _, _) in resultado.items() if st not in (200, 429, 503)]
+    for n in outros[:3]:
+        print(f"    texto {resultado[n][0]} ({n}): {(resultado[n][1] or '(sem corpo)')[:300]}")
+    if outros and all(resultado[n][0] == 401 for n in outros):
+        print("    >> 401 em TODAS as chaves: keys desativadas ou invalidas (vazamento em")
+        print("       repo publico? acao na conta?). Isso NAO e cota: P1-P4 nao medem nada")
+        print("       util ate existir keys vivas. Veja docs/DIAGNOSTICO_COTA.md secao 9.")
     return resultado, ok
 
 
