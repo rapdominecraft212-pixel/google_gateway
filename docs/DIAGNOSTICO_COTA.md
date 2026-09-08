@@ -1,0 +1,170 @@
+# Diagnóstico: "com 36 chaves, como a cota acaba no meio do processo?"
+
+> Data: 2026-09-08 · Método: forense do `logs/eventos-diagnostico.log` de produção
+> (2.658 eventos reais de 2026-09-07) + teste ao vivo do gateway + leitura de código.
+> Zero mock: todos os números abaixo vêm de tráfego real ou de execução real.
+
+---
+
+## TL;DR
+
+**O gateway modela cota POR CHAVE. O Google cobra cota POR PROJETO.**
+As 36 keys criadas no AI Studio pertencem (provavelmente) ao **mesmo projeto** —
+então o pool inteiro compartilha **UM** balde de RPM/TPM/RPD. O gateway acha que
+tem 36 × (20 RPM / 250k TPM) = 720 RPM / 9M TPM; a realidade é 20 RPM / 250k TPM
+**no total**. Quando o contexto do opencode cresce (39k → 96k tokens/pedido),
+3 pedidos grandes no mesmo minuto estouram o TPM do projeto — e **todas** as
+chaves começam a dar 429 ao mesmo tempo, inclusive as "frias". O failover então
+**queima mais cota do projeto em vez de ajudar**, o pedido pendura ~35–120s
+esperando e morre com 429 `sem_chave`. É exatamente o sintoma relatado.
+
+---
+
+## 1. O sintoma (relato)
+
+> "Ele lê 30 arquivos, me dá uma resposta normal. Depois eu peço outra coisa,
+> ele lê, demora bastante e dá erro."
+
+## 2. A evidência (log de produção, 2026-09-07)
+
+| Métrica | Valor | O que significa |
+|---|---|---|
+| Pedidos no dia | 105 (89 ok, 16 `sem_chave`) | 15% dos pedidos morreram sem chave |
+| Falhas por chave no caminho | **1.053** (1.029 × 429, 24 × 503) | quase 10 falhas por pedido, em média |
+| 429 com janela local ZERADA | **987 de 1.029 (96%)** | `reqs_60s=0, tokens_60s=0`: chave fria e o Google ainda disse "cota excedida" ⇒ a cota estourada **não é da chave** |
+| Distribuição das falhas | **todas** as 36 keys: ~30–31 falhas cada | esgotamento **uniforme** = assinatura de balde compartilhado |
+| Pior pedido | `chaves_queimadas: 144` | 4 passadas completas pela pool (144 = 4 × 36) |
+| Contexto por pedido | mediana 37.822 tokens, máx 96.005 | cada request reenvia a conversa inteira |
+| Episódio crítico | 20:19–20:27 (11 `sem_chave`, ~660 falhas) | o "meio do processo" do relato |
+| Latência dos `sem_chave` | 35s a 120s | o "demora bastante" = deadline de espera (`max_espera_requisicao_seg: 120`) |
+
+### Timeline do colapso (tokens estimados/minuto vs falhas)
+
+```
+19:52   17 pedidos, ~840k tokens no minuto   → tudo OK (última hora boa)
+19:53   3 pedidos, 177k tokens               → 96 falhas 429  (estourou)
+19:54   0 pedidos novos                      → 122 falhas 429  (retry preso)
+19:55   0 pedidos novos                      →  18 falhas + 1 sem_chave
+20:02–20:09  volta intermitente (ok com falhas esparsas)
+20:19–20:27  colapso total: ~660 falhas, 11 sem_chave, quase nada ok
+22:05   volta a funcionar sozinho (janela de minuto do Google escoou)
+```
+
+O recovery em minutos **descarta cota diária (RPD)**: foi estouro de **minuto**
+(RPM/TPM). 840k tokens/min ≫ 250k TPM — se o balde for do projeto, estourou 3×.
+
+## 3. Como funciona esse bug (a mecânica, passo a passo)
+
+1. **O contexto cresce sem parar.** O protocolo é stateless: cada pedido do
+   opencode reenvia a conversa inteira. Na sessão do log, o pedido foi de
+   39k → 96k tokens conforme o agente lia arquivos. Três pedidos de ~90k no
+   mesmo minuto = ~270k tokens — acima do TPM 250k **de um único balde**.
+2. **O Google cobra no projeto.** Doc oficial (RELATORIO_GEMINI_API.md §8.1):
+   "Limites são **por projeto**, não por chave". O AI Studio cria **um**
+   projeto e nele ficam todas as keys (§1). Cota do pool = cota de 1 key.
+3. **O projeto estoura → todas as keys dão 429 juntas.** 96% dos 429 chegaram
+   com a janela local da chave zerada — o gateway não tem como ver o contador
+   do projeto; ele conta por chave (estado.py/janelas.py).
+4. **O failover reage do jeito errado.** Foi desenhado para chaves
+   independentes: 429 na Google-7 ⇒ "problema dela, tenta a Google-8". Sob
+   cota compartilhada, cada tentativa **queima mais RPM do mesmo projeto** e
+   mantém o balde estourado. Um pedido chegou a 144 tentativas.
+5. **E ainda acelera.** O sinal dos racers (paralelismo) é alimentado por
+   qualquer falha, inclusive quota (`proxy.py` → `registrar_sinal_racers` no
+   `finally`): na tempestade o paralelismo subiu de 1 → 2 → 3 (cap 6). Mais
+   pedidos simultâneos contra o mesmo balde exaurido = tempestade pior.
+6. **O cliente espera e morre.** Enquanto isso o pedido cicla (espera 5s ×
+   `max_ciclos_espera: 2`, deadline 120s) — o "demora bastante" — até o
+   gateway devolver 429 `sem_chave` — o "dá erro".
+7. **Reinicia o ciclo.** O opencode tenta de novo, os cooldowns de 15s por
+   chave expiram, nova tempestade. Durou ~7 min no episódio das 20:19.
+
+**Por que 36 chaves não ajudam:** se todas são do mesmo projeto, elas dão
+redundância de *chave* (uma ser banida não derruba o pool), mas **zero**
+redundância de *cota*. O pool É uma chave só, aos olhos do Google.
+
+## 4. Mapa de bugs
+
+| # | Severidade | Bug | Evidência | Onde no código |
+|---|---|---|---|---|
+| B1 | 🔴 crítica | Modelo de cota **por chave**; realidade é **por projeto**. Capacidade superestimada em ~36× (anunciada ao cliente!) | 96% dos 429 com janela zerada; queima uniforme; `pool_tpm: 9.000.000` no corpo do erro | `roteador.py`, `estado.py`, `janelas.py` (todo o modelo); `endpoints.py:86-87` (`pool_rpm = rpm × n`) |
+| B2 | 🔴 crítica | Failover sem noção de balde comum: `tentativas_por_pedido` = **todas** as chaves; 1 pedido ⇒ até 36–144 requests ao projeto exaurido | `chaves_queimadas: 144` no log | `app/config.py:127-137` |
+| B3 | 🟠 alta | Racers (paralelismo) alimentados por falha de **quota**: na tempestade de 429 o gateway ataca **mais forte** | racers base 1→2→3 (ma 2.7) durante as tempestades | `app/proxy.py` (`finally` → `registrar_sinal_racers`), `app/estado.py:242-273` |
+| B4 | 🟠 alta | Limites do config nunca conferidos com o tier real (`rpm: 20, tpm: 250000, rpd: 1500` por chave) — se o free tier real for menor, tudo acima piora | a confirmar com P1 do `teste_cota_real.py` | `config.json` (`limites`) |
+| B5 | 🟡 média | Crescimento de contexto do cliente sem freio: 39k → 96k tokens/pedido na mesma sessão (gatilho do estouro; não é defeito do gateway, mas ele pode mitigar) | coluna `tokens_est` do log | client-side (opencode: compact/subagents) |
+| B6 | 🟡 média | `historico.db` ficou **readonly** 13× em produção ⇒ contabilidade/statísticas perdidas nesses períodos (cega o diagnóstico, não causa o 429) | 13 eventos `db_readonly_causa` | `app/db.py` (a investigar: lock de antivírus/arquivo no Windows) |
+
+## 5. Testes reais executados
+
+### 5.1 Forense do log de produção (evidência §2)
+Parser completo dos 2.658 eventos: contagens, timeline, distribuição por chave,
+visão local vs resposta do Google, escalada de racers. Zero teoria — tudo medido.
+
+### 5.2 Gateway ao vivo, cenário de falha total (neste ambiente)
+Servidor real (`servidor.py`, uvicorn + SQLite reais, config real de 36 chaves),
+com `GEMINI_API_BASE` apontando para endereço com conexão recusada (erro de rede
+real e instantâneo, sem mock):
+
+```
+POST /v1/chat/completions {"model":"gemini-3.8-flash","messages":[{"role":"user","content":"oi"}]}
+→ HTTP 429 em 45.0s
+  corpo: "rede indisponivel ... aguardando a rede"
+  cota:  {"chaves_ativas":36, "pool_rpm":720, "pool_tpm":9000000}
+  trilha: 9 chaves tentadas serialmente (Google-1 → Google-9), 45s de espera, sem_chave
+```
+
+Reproduz a mecânica do sintoma (espera longa + 429) e **prova o anúncio de
+capacidade 36×** (B1) no próprio corpo de erro.
+
+### 5.3 Validação remota de keys (inconclusiva por formato, não por invalidez)
+Pela rede da plataforma: key falsa genérica → `400 API_KEY_INVALID`; key falsa
+no formato novo `AQ.Ab8…` → `401 ACCESS_TOKEN_TYPE_UNSUPPORTED`; suas keys →
+o mesmo 401 da falsa-formato-novo ⇒ o 401 é **roteamento por formato** do canal
+GET sem header, **não** indica keys mortas. Validação de verdade precisa do
+header `Authorization: Bearer` — feito abaixo, na sua máquina.
+
+## 6. O que rodar na SUA máquina (decisivo, ~500 tokens de custo)
+
+O repo já tem o teste exato para isto (`teste/teste_cota_real.py`, zero mock,
+usa a função de produção `gemini_api.abrir_chat`):
+
+```
+python teste/teste_cota_real.py --yes-real
+```
+
+- **P0** radiografia das 36 keys (todas vivas?)
+- **P1** quantas reqs/min UMA key aguenta antes do 429 (=RPM real do tier ⇒ B4)
+- **P2** saturar a key A **contamina** a key B fria? ← **se sim, B1 confirmado**
+- **P3** a key saturada ainda serve outro modelo? (throttle por modelo)
+- **P4** ritmo sustentável da pool
+
+**Leitura do P2:** se logo após saturar a key A a key B (fria, sem uso) também
+tomar 429, o balde é compartilhado — B1 vira fato, e a correção F1 abaixo é
+obrigatória. Se B continuar OK, o problema é outro (então B4/B2 levam a culpa).
+
+## 7. Plano de correção (ordem de prioridade)
+
+1. **F1 — cota por grupo/projeto**: declarar no config quais keys compartilham
+   projeto (`"projeto": "..."` por chave, ou modo global
+   `"cota_compartilhada": true`). Janelas de RPM/TPM passam a ser somadas **por
+   grupo**; roteador escolhe grupo com folga; admissão preditiva de TPM
+   (que já existe por chave em `roteador.py`) passa a valer pelo grupo.
+2. **F2 — failover consciente de quota**: 429-quota em ≥N keys do mesmo grupo
+   em <X s ⇒ cooldown do **grupo inteiro** (com `retry_after` do Google quando
+   houver), em vez de queimar as 36. Corta a tempestade na raiz (B2).
+3. **F3 — racers só para capacidade**: falha tipo `quota` não alimenta
+   `registrar_sinal_racers` (só 503/rede alimentam) (B3).
+4. **F4 — conferir limites reais**: AI Studio → Rate limits; ajustar
+   `config.json` com o que o P1 medir (B4).
+5. **F5 — mitigação de contexto**: compactação/subagents no opencode para
+   conter 39k→96k (B5); no gateway, orçamento de TPM por grupo já ajuda.
+6. **F6 — db readonly**: reproduzir/caçar o lock no Windows (B6).
+
+## 8. Perguntas em aberto
+
+- As 36 keys são todas do mesmo projeto? (P2 responde; AI Studio → Projects
+  também mostra a coluna de projeto de cada key.)
+- O tier é Free mesmo? Qual o RPM/TPM/RPD real do `gemini-3.8-flash` nele?
+  (AI Studio → Rate limits; o 429 do P1 traz o corpo completo do Google.)
+- O `sem_chave` instantâneo (2ms) às 18:48 logo após restart merece inspeção
+  (estado de cooldown sobrevive ao restart?).
