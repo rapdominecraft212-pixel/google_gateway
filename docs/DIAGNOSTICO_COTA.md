@@ -125,6 +125,30 @@ header `Authorization: Bearer` — feito abaixo, na sua máquina.
 
 ## 6. O que rodar na SUA máquina (decisivo, ~500 tokens de custo)
 
+### Jeito fácil — GitHub Desktop no Windows (fluxo de 2 cliques)
+
+1. Aceite este PR no GitHub Desktop e abra a pasta local do repositório.
+2. **Dois cliques em `RODAR-TESTE-COTA.bat`** (na raiz do repo). Ele sozinho:
+   - acha o Python (`python` → `py -3` → caminho padrão do instalador python.org);
+   - se não houver `config.json` no clone (ele fica fora do git de propósito),
+     copia do Monitor-Google original (`Desktop\Monitor-Google`) ou pede o caminho;
+   - roda o teste real capturando **tudo** em `teste/resultados/cota-real-*.txt`:
+     ambiente (máquina/Python/branch/commit), config sanitizado (keys ocultas),
+     saída completa do teste e custo no fim.
+3. No GitHub Desktop: vai aparecer 1 arquivo novo em `teste\resultados\` —
+   escreva o commit e clique em **Push origin**.
+4. O resultado chega ao repositório e a análise/correção (F1–F6) continua.
+
+Validar a canalização sem gastar cota (opcional):
+`python teste\coletar_dados_cota.py --ensaio`
+(o teste recusa rodar sem `--yes-real` e sai — isso é o esperado).
+
+Interpretando: o arquivo de resultados traz tudo; os campos-chave são o
+**P2** (chave B fria recusa junto com A saturada ⇒ balde compartilhado) e o
+**P1** (RPM real medido por chave ⇒ limites corretos do tier).
+
+### Jeito manual — linha de comando
+
 O repo já tem o teste exato para isto (`teste/teste_cota_real.py`, zero mock,
 usa a função de produção `gemini_api.abrir_chat`):
 

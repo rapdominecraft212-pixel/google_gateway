@@ -50,6 +50,9 @@ ESTRUTURA
   backups/             snapshots antigos do config.json (fora do git)
   logs/                logs de runtime (fora do git)
   .gitignore           mantem segredos e runtime fora do git
+  RODAR-TESTE-COTA.bat  teste de cota real em 2 cliques (Windows/GitHub
+                       Desktop): roda teste/teste_cota_real.py e grava o
+                       pacote de dados em teste/resultados/ (veja passo 6)
   app/
     config.py          leitura/validacao do config.json
     gemini_api.py      cliente da camada OpenAI-compat do Google
@@ -124,6 +127,13 @@ COMO USAR
      python monitorar.py              checagem unica
      python monitorar.py --watch 60   monitora a cada 60s
      python monitorar.py --historico  ultimas coletas
+
+6. Teste de cota real (Windows / GitHub Desktop): 2 cliques em
+       RODAR-TESTE-COTA.bat
+   Ele roda teste/teste_cota_real.py (--yes-real) e grava o pacote de
+   dados em teste/resultados/ - depois e so commitar e pushar pelo
+   GitHub Desktop. Custo: ~76 pedidos, ~500 tokens.
+   Detalhes e leitura do resultado: docs/DIAGNOSTICO_COTA.md (secao 6).
 
 API (tudo GET, salvo indicado)
 ------------------------------
